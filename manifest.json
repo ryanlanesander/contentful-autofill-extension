@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Contentful Autofill (Ry)",
+  "version": "0.7.3",
+  "description": "Added quote game type, removed bonus banner, improved bonus game detection.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://app.contentful.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://app.contentful.com/*"
+      ],
+      "all_frames": true,
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

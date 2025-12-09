@@ -1,0 +1,17 @@
+
+#cf-autofill-launcher { position: fixed; bottom: 16px; right: 16px; z-index: 999998;
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.12);
+  background: #ffffff; box-shadow: 0 8px 20px rgba(0,0,0,0.15); cursor: pointer; font-size: 20px; }
+#cf-autofill-panel { position: fixed; top: 12px; right: 12px; z-index: 999999; background: white;
+  border: 1px solid rgba(0,0,0,0.1); box-shadow: 0 8px 24px rgba(0,0,0,0.12); border-radius: 12px;
+  font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; width: 400px; overflow: hidden; display: none; }
+#cf-autofill-panel.cfaf-placed { right: auto; }
+#cf-autofill-panel .cfaf-header { padding: 8px 10px; background: #f6f7f9; border-bottom: 1px solid rgba(0,0,0,0.06);
+  display: flex; justify-content: space-between; align-items: center; cursor: grab; user-select: none; }
+#cf-autofill-panel .cfaf-body { padding: 10px 12px; }
+#cf-autofill-panel .cfaf-row { display: flex; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+#cf-autofill-panel button { padding: 6px 10px; border-radius: 8px; border: 1px solid #dadde2; background: #fff; cursor: pointer; }
+#cf-autofill-panel .cfaf-status { margin-top: 8px; font-size: 12px; color: #333; }
+#cf-autofill-panel .cfaf-plan { margin-top: 8px; font-size: 12px; line-height: 1.4; }
+#cf-autofill-panel code { background: #f2f4f7; padding: 1px 4px; border-radius: 4px; }
+#cf-autofill-panel .cfaf-chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }

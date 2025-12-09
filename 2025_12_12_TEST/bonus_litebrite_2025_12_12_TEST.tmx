@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down" width="8" height="8" tilewidth="64" tileheight="64" infinite="0" nextlayerid="66" nextobjectid="1">
+ <editorsettings>
+  <export target="bonus_litebrite_2025_12_12_france..tmj" format="json"/>
+ </editorsettings>
+ <tileset firstgid="1" source="../../../Downloads/LiteBrite/litebrite-tileset.tsj"/>
+ <layer id="62" name="anim7" width="8" height="8" visible="0">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,
+3,0,0,0,0,0,0,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,0,0,0,0,0,0,0,
+3,0,0,0,0,0,0,0
+</data>
+ </layer>
+ <layer id="63" name="anim6" width="8" height="8" visible="0">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,
+3,0,0,0,0,0,0,0,
+3,2,2,0,0,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,0,2,4,4,1,0,0,
+3,0,0,0,0,0,0,0
+</data>
+ </layer>
+ <layer id="58" name="anim5" width="8" height="8">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,
+3,0,0,0,0,0,0,0,
+3,2,2,0,0,0,0,0,
+3,2,2,4,4,1,0,0,
+3,2,2,4,4,1,0,0,
+3,2,2,4,4,1,0,0,
+3,0,2,4,4,1,0,0,
+3,0,0,0,1,1,0,0
+</data>
+ </layer>
+ <layer id="64" name="anim4" width="8" height="8" visible="0">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,
+3,0,0,0,0,0,0,0,
+3,2,2,0,0,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,0,2,4,4,1,0,0,
+3,0,0,0,0,0,0,0
+</data>
+ </layer>
+ <layer id="65" name="anim3" width="8" height="8" visible="0">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,
+3,0,0,0,0,0,0,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,0,0,0,0,0,0,0,
+3,0,0,0,0,0,0,0
+</data>
+ </layer>
+ <layer id="59" name="anim2" width="8" height="8" visible="0">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,
+3,0,2,4,4,1,0,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,0,0,1,1,0,
+3,0,0,0,0,0,0,0,
+3,0,0,0,0,0,0,0
+</data>
+ </layer>
+ <layer id="56" name="anim1" width="8" height="8" visible="0">
+  <data encoding="csv">
+0,0,0,0,1,1,0,0,
+3,0,2,4,4,1,0,0,
+3,2,2,4,4,1,0,0,
+3,2,2,4,4,1,0,0,
+3,2,2,4,4,1,0,0,
+3,2,2,0,0,0,0,0,
+3,0,0,0,0,0,0,0,
+3,0,0,0,0,0,0,0
+</data>
+ </layer>
+ <layer id="60" name="anim0" width="8" height="8" visible="0">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,
+3,0,2,4,4,1,0,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,0,0,1,1,0,
+3,0,0,0,0,0,0,0,
+3,0,0,0,0,0,0,0
+</data>
+ </layer>
+ <layer id="61" name="tiles" width="8" height="8" visible="0">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,
+3,0,0,0,0,0,0,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,2,2,4,4,1,1,0,
+3,0,0,0,0,0,0,0,
+3,0,0,0,0,0,0,0
+</data>
+ </layer>
+</map>
