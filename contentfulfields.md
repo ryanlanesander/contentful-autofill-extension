@@ -60,6 +60,13 @@ thumbnailSmall field
 game1 field
     -> click add media
         if there was is a file with "day" and "prompt"  in the filename, click "ritual prompt"
+            -> in the ritual prompt modal, fill out the fields as follows:
+                ritualPromptTitle field
+                    -> use "Ritual Prompt"
+                ritualPromptImage field
+                    -> click add media, add new media, then upload image with "day" and "prompt" in the filename
+                ritualPromptDescription field
+                    -> use "Complete this ritual to earn extra rewards!"
         else if there was is a file with "day" and "prompt[b, 2 or similar suffix]" in the filename, click "prompt"
         else if there was is a file with "day" and "path" in the filename, click "path"
         else if there was is a file with "day" and "swap" in the filename, click "swap"

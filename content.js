@@ -62,14 +62,20 @@ const SELECTORS = {
         </div>
         <div class="cfaf-row">
           <button id="cfaf-pick-folder">Pick Folder</button>
-          <button id="cfaf-dry-run" disabled>Dry-run</button>
+          <button id="cfaf-pick-batch">Pick Multiple Folders</button>
         </div>
         <div class="cfaf-row">
+          <button id="cfaf-dry-run" disabled>Dry-run</button>
           <button id="cfaf-fill" disabled>Fill fields</button>
+        </div>
+        <div class="cfaf-row">
           <label class="cfaf-chk"><input type="checkbox" id="cfaf-set-json"> Also set JSON</label>
         </div>
         <div class="cfaf-row">
           <button id="cfaf-fill-upload" disabled>Fill + Upload</button>
+          <button id="cfaf-batch-upload" disabled>Batch Upload All</button>
+        </div>
+        <div class="cfaf-row">
           <button id="cfaf-cancel" disabled>Cancel</button>
         </div>
         <div id="cfaf-status" class="cfaf-status">Ready.</div>
@@ -105,16 +111,27 @@ const SELECTORS = {
         const r=panel.getBoundingClientRect(); localStorage.setItem('cfaf_pos', JSON.stringify({x:r.left,y:r.top})); }
     })();
 
-    const state = { dirHandle: null, plan: null, jsonData: null, abortController: null, workflow: 'peacock-path' };
+    const state = { 
+      dirHandle: null, 
+      plan: null, 
+      jsonData: null, 
+      abortController: null, 
+      workflow: 'peacock-path',
+      batchFolders: [],
+      batchPlans: [],
+      batchErrors: []
+    };
     const $ = sel => document.querySelector(sel);
     const statusEl = $('#cfaf-status');
     const planEl = $('#cfaf-plan');
 
     const workflowSelect = $('#cfaf-workflow');
     const btnPick = $('#cfaf-pick-folder');
+    const btnPickBatch = $('#cfaf-pick-batch');
     const btnDry = $('#cfaf-dry-run');
     const btnFill = $('#cfaf-fill');
     const btnFillUpload = $('#cfaf-fill-upload');
+    const btnBatchUpload = $('#cfaf-batch-upload');
     const btnCancel = $('#cfaf-cancel');
     const chkJson = $('#cfaf-set-json');
 
@@ -130,6 +147,7 @@ const SELECTORS = {
     });
 
     btnPick.addEventListener('click', pickFolder);
+    btnPickBatch.addEventListener('click', pickBatchFolders);
     btnDry.addEventListener('click', dryRun);
     btnFill.addEventListener('click', () => fillFields(state.plan, { setJson: chkJson.checked }));
     btnFillUpload.addEventListener('click', async () => {
@@ -152,6 +170,7 @@ const SELECTORS = {
         state.abortController = null;
       }
     });
+    btnBatchUpload.addEventListener('click', batchUploadAll);
     btnCancel.addEventListener('click', () => {
       if (state.abortController) {
         state.abortController.abort();
@@ -178,6 +197,82 @@ const SELECTORS = {
         status('Folder parsed. Ready.');
         btnDry.disabled = false; btnFill.disabled = false; btnFillUpload.disabled = false;
       } catch (e) { status('Folder pick failed: ' + (e?.message || e)); console.error(e); }
+    }
+
+    async function pickBatchFolders() {
+      try {
+        status('Opening folder picker for parent directory…');
+        if (!window.showDirectoryPicker) throw new Error('showDirectoryPicker not supported.');
+        
+        // Ask user to select parent folder containing all the subfolders
+        const parentHandle = await window.showDirectoryPicker({ mode: 'read' });
+        
+        // Collect all subdirectories
+        const folders = [];
+        for await (const [name, handle] of parentHandle.entries()) {
+          if (handle.kind === 'directory') {
+            folders.push({ name, handle });
+          }
+        }
+        
+        if (folders.length === 0) {
+          status('No subfolders found in selected directory.');
+          return;
+        }
+        
+        // Sort folders by name
+        folders.sort((a, b) => a.name.localeCompare(b.name));
+        
+        status(`Found ${folders.length} folder(s). Building plans…`);
+        
+        // Build plans for all folders
+        state.batchFolders = folders;
+        state.batchPlans = [];
+        state.batchErrors = [];
+        
+        for (const folder of folders) {
+          try {
+            const plan = state.workflow === 'lil-snack-day' 
+              ? await buildLilSnackDayPlan(folder.handle)
+              : await buildPlanFromFolder(folder.handle);
+            plan.dirHandle = folder.handle; // Store handle with plan
+            state.batchPlans.push(plan);
+          } catch (e) {
+            console.error(`Error building plan for ${folder.name}:`, e);
+            state.batchErrors.push(`Plan error for ${folder.name}: ${e?.message || e}`);
+          }
+        }
+        
+        renderBatchPlan(state.batchPlans);
+        status(`Batch ready: ${state.batchPlans.length} folder(s) queued.`);
+        btnBatchUpload.disabled = false;
+        
+      } catch (e) { 
+        status('Batch folder pick failed: ' + (e?.message || e)); 
+        console.error(e); 
+      }
+    }
+
+    function renderBatchPlan(plans) {
+      planEl.innerHTML = '';
+      const list = document.createElement('div');
+      list.className = 'cfaf-list';
+      
+      list.appendChild(h(`<div><strong>Batch Upload Queue (${plans.length} folders):</strong></div>`));
+      
+      plans.forEach((plan, idx) => {
+        const folderName = plan.folderName || plan.entryId || `Folder ${idx + 1}`;
+        list.appendChild(h(`<div>${idx + 1}. <code>${escapeHtml(folderName)}</code></div>`));
+      });
+      
+      if (state.batchErrors.length > 0) {
+        list.appendChild(h(`<div style="color: orange; margin-top: 10px;"><strong>Errors during plan building:</strong></div>`));
+        state.batchErrors.forEach(err => {
+          list.appendChild(h(`<div style="color: orange; font-size: 11px;">⚠ ${escapeHtml(err)}</div>`));
+        });
+      }
+      
+      planEl.appendChild(list);
     }
 
     async function dryRun() {
@@ -926,6 +1021,264 @@ const SELECTORS = {
     function activeModal(){
       const all = Array.from(document.querySelectorAll(SELECTORS.modalRoot));
       return all[all.length - 1] || null;
+    }
+
+    async function duplicateEntry() {
+      try {
+        status('Duplicating entry...');
+        console.log('[Autofill] Starting duplicate entry process');
+        
+        // Wait a moment for page to be ready
+        await new Promise(r => setTimeout(r, 500));
+        
+        // Store current URL to detect navigation
+        const originalUrl = window.location.href;
+        console.log('[Autofill] Current URL:', originalUrl);
+        
+        // Find the entry actions button (the three-dot menu)
+        const entryActionsBtn = await waitFor(() => {
+          const buttons = Array.from(document.querySelectorAll('button[aria-label="Entry actions"][aria-haspopup="menu"]'));
+          return buttons[0] || null;
+        }, 8000);
+        
+        if (!entryActionsBtn) {
+          throw new Error('Entry actions button not found');
+        }
+        
+        console.log('[Autofill] Found entry actions button');
+        entryActionsBtn.scrollIntoView({ block: 'center' });
+        await new Promise(r => setTimeout(r, 300));
+        entryActionsBtn.click();
+        
+        // Wait for the menu to appear
+        await new Promise(r => setTimeout(r, 500));
+        
+        // Find the duplicate button in the menu
+        const duplicateBtn = await waitFor(() => {
+          const buttons = Array.from(document.querySelectorAll('button[data-test-id="cf-ui-button-action-duplicate"]'));
+          return buttons.find(b => b.textContent.trim().toLowerCase().includes('duplicate')) || null;
+        }, 5000);
+        
+        if (!duplicateBtn) {
+          throw new Error('Duplicate button not found in menu');
+        }
+        
+        console.log('[Autofill] Found duplicate button, clicking...');
+        duplicateBtn.click();
+        
+        // Wait for URL to change (navigation to duplicated entry)
+        console.log('[Autofill] Waiting for page navigation...');
+        await waitFor(() => window.location.href !== originalUrl, 10000);
+        console.log('[Autofill] URL changed to:', window.location.href);
+        
+        // Wait for the new page to fully load and be interactive
+        await new Promise(r => setTimeout(r, 2000));
+        
+        // Wait for key UI elements to be present
+        await waitFor(() => {
+          const hasInputs = document.querySelectorAll('input[type="text"]').length > 0;
+          const hasPanel = document.getElementById('cf-autofill-panel');
+          return hasInputs && hasPanel;
+        }, 10000);
+        
+        console.log('[Autofill] Entry duplicated and page loaded successfully');
+        status('Entry duplicated. Ready for next upload.');
+        
+      } catch (e) {
+        console.error('[Autofill] Error duplicating entry:', e);
+        status(`Failed to duplicate entry: ${e?.message || e}`);
+        throw e;
+      }
+    }
+
+    async function clearAllFields() {
+      try {
+        status('Clearing all fields...');
+        console.log('[Autofill] Starting to clear all fields');
+        
+        // Wait for page to be ready
+        await new Promise(r => setTimeout(r, 1000));
+        
+        // Clear text input fields - but skip the autofill panel inputs
+        const textInputs = document.querySelectorAll('input[type="text"], input[type="date"], textarea');
+        console.log(`[Autofill] Found ${textInputs.length} text inputs to potentially clear`);
+        
+        let clearedCount = 0;
+        textInputs.forEach(input => {
+          // Skip inputs inside our autofill panel
+          if (input.closest('#cf-autofill-panel')) return;
+          
+          if (input.value && input.value.trim()) {
+            try {
+              input.focus();
+              input.value = '';
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+              input.dispatchEvent(new Event('change', { bubbles: true }));
+              clearedCount++;
+            } catch (e) {
+              console.warn('[Autofill] Error clearing input:', e);
+            }
+          }
+        });
+        
+        console.log(`[Autofill] Cleared ${clearedCount} text fields`);
+        
+        // Clear any contenteditable fields (like JSON editor)
+        const editableFields = document.querySelectorAll('[contenteditable="true"]');
+        console.log(`[Autofill] Found ${editableFields.length} editable fields`);
+        
+        editableFields.forEach(field => {
+          if (field.textContent && field.textContent.trim()) {
+            try {
+              field.focus();
+              field.textContent = '';
+              field.dispatchEvent(new Event('input', { bubbles: true }));
+            } catch (e) {
+              console.warn('[Autofill] Error clearing editable field:', e);
+            }
+          }
+        });
+        
+        console.log('[Autofill] Text fields cleared, now removing linked assets...');
+        
+        // Remove linked assets (puzzle, emojis, etc.) by clicking their action menu and remove button
+        const cardActionButtons = document.querySelectorAll('button[data-test-id="cf-ui-card-actions"]');
+        console.log(`[Autofill] Found ${cardActionButtons.length} asset cards to remove`);
+        
+        for (const actionBtn of cardActionButtons) {
+          try {
+            // Skip if it's inside our autofill panel
+            if (actionBtn.closest('#cf-autofill-panel')) continue;
+            
+            console.log('[Autofill] Clicking card action button...');
+            actionBtn.scrollIntoView({ block: 'center' });
+            await new Promise(r => setTimeout(r, 200));
+            actionBtn.click();
+            
+            // Wait for dropdown menu to appear
+            await new Promise(r => setTimeout(r, 300));
+            
+            // Find and click the Remove button in the dropdown
+            const removeBtn = await waitFor(() => {
+              const buttons = Array.from(document.querySelectorAll('button[data-test-id="card-action-remove"]'));
+              return buttons.find(b => b.textContent.trim().toLowerCase().includes('remove')) || null;
+            }, 3000).catch(() => null);
+            
+            if (removeBtn) {
+              console.log('[Autofill] Clicking remove button...');
+              removeBtn.click();
+              await new Promise(r => setTimeout(r, 300));
+            } else {
+              console.warn('[Autofill] Remove button not found for asset card');
+            }
+            
+          } catch (e) {
+            console.warn('[Autofill] Error removing asset card:', e);
+            // Continue to next card even if this one fails
+          }
+        }
+        
+        console.log('[Autofill] Fields and assets cleared successfully');
+        status('All fields cleared.');
+        
+      } catch (e) {
+        console.error('[Autofill] Error clearing fields:', e);
+        status(`Failed to clear fields: ${e?.message || e}`);
+        throw e;
+      }
+    }
+
+    async function batchUploadAll() {
+      if (state.batchPlans.length === 0) {
+        status('No folders in batch queue.');
+        return;
+      }
+      
+      try {
+        state.abortController = new AbortController();
+        btnBatchUpload.disabled = true;
+        btnCancel.disabled = false;
+        state.batchErrors = [];
+        
+        status(`Starting batch upload: ${state.batchPlans.length} folder(s)…`);
+        
+        for (let i = 0; i < state.batchPlans.length; i++) {
+          if (state.abortController?.signal.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
+          }
+          
+          const plan = state.batchPlans[i];
+          const folderName = plan.folderName || plan.entryId || `Folder ${i + 1}`;
+          
+          try {
+            status(`[${i + 1}/${state.batchPlans.length}] Processing: ${folderName}…`);
+            console.log(`[Autofill] Processing batch item ${i + 1}/${state.batchPlans.length}: ${folderName}`);
+            
+            // If this is NOT the first folder, duplicate the entry
+            if (i > 0) {
+              console.log(`[Autofill] Step 1: Duplicating entry for ${folderName}`);
+              await duplicateEntry();
+              
+              console.log(`[Autofill] Step 2: Clearing fields for ${folderName}`);
+              await clearAllFields();
+            }
+            
+            // Set the dirHandle for this specific plan
+            state.dirHandle = plan.dirHandle;
+            console.log(`[Autofill] Step 3: Set dirHandle for ${folderName}`);
+            
+            // Fill fields and upload assets for this folder
+            console.log(`[Autofill] Step 4: Filling fields for ${folderName}`);
+            await fillFields(plan, { setJson: chkJson.checked });
+            
+            console.log(`[Autofill] Step 5: Uploading assets for ${folderName}`);
+            await uploadAllAssets(plan);
+            
+            status(`[${i + 1}/${state.batchPlans.length}] ✓ Completed: ${folderName}`);
+            console.log(`[Autofill] Completed: ${folderName}`);
+            
+            // Wait a bit between uploads to let the UI settle
+            if (i < state.batchPlans.length - 1) {
+              await new Promise(r => setTimeout(r, 1000));
+            }
+            
+          } catch (e) {
+            const errorMsg = `Error on ${folderName}: ${e?.message || e}`;
+            console.error(`[Autofill] ${errorMsg}`, e);
+            state.batchErrors.push(errorMsg);
+            
+            // Continue with next folder instead of stopping
+            status(`[${i + 1}/${state.batchPlans.length}] ✗ Error: ${folderName} - ${e?.message || e}`);
+          }
+        }
+        
+        // Show final summary
+        const successCount = state.batchPlans.length - state.batchErrors.length;
+        let summary = `Batch complete! ${successCount}/${state.batchPlans.length} succeeded.`;
+        
+        if (state.batchErrors.length > 0) {
+          summary += '\\n\\nErrors encountered:';
+          state.batchErrors.forEach((err, idx) => {
+            summary += `\\n${idx + 1}. ${err}`;
+          });
+          console.error('[Autofill] Batch errors:', state.batchErrors);
+        }
+        
+        status(summary);
+        alert(summary);
+        
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          status('Batch upload cancelled.');
+        } else {
+          status('Batch upload failed: ' + (e?.message || e));
+          console.error(e);
+        }
+      } finally {
+        btnBatchUpload.disabled = false;
+        btnCancel.disabled = true;
+        state.abortController = null;
+      }
     }
 
     function waitFor(fn, timeoutMs=8000, interval=120){
