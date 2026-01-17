@@ -14,6 +14,12 @@ const SELECTORS = {
   dateInput: '[aria-label="Enter date"]',
   shareCoinType: '[data-field-id="shareCoinType"]',
   
+  // Swap selectors
+  swapId: '[data-field-id="id"] input[type="text"]',
+  swapGameTitle: '#field-gameTitle-en-US, [data-field-id="gameTitle"] input[type="text"]',
+  swapGameDescription: '[data-field-id="gameDescription"] textarea, [data-field-id="gameDescription"] input[type="text"]',
+  swapJsonEditable: '[data-test-id="json-editor-code-mirror"] .cm-content[contenteditable="true"]',
+  
   // Common selectors
   fieldById: fid => `[data-field-id="${fid}"]`,
   trgAddMedia: '[data-test-id="link-actions-menu-trigger"]',
@@ -57,6 +63,7 @@ const SELECTORS = {
             <select id="cfaf-workflow" style="padding: 6px; border-radius: 6px; border: 1px solid #dadde2;">
               <option value="peacock-path">Peacock Path</option>
               <option value="lil-snack-day">Lil Snack Day</option>
+              <option value="swap">Swap</option>
             </select>
           </label>
         </div>
@@ -143,7 +150,8 @@ const SELECTORS = {
       btnDry.disabled = true;
       btnFill.disabled = true;
       btnFillUpload.disabled = true;
-      status(`Workflow changed to: ${workflowSelect.value === 'peacock-path' ? 'Peacock Path' : 'Lil Snack Day'}`);
+      const workflowNames = {'peacock-path': 'Peacock Path', 'lil-snack-day': 'Lil Snack Day', 'swap': 'Swap'};
+      status(`Workflow changed to: ${workflowNames[workflowSelect.value] || workflowSelect.value}`);
     });
 
     btnPick.addEventListener('click', pickFolder);
@@ -191,6 +199,8 @@ const SELECTORS = {
         window._cfaf_dirHandle = handle;
         const plan = state.workflow === 'lil-snack-day' 
           ? await buildLilSnackDayPlan(handle)
+          : state.workflow === 'swap'
+          ? await buildSwapPlan(handle)
           : await buildPlanFromFolder(handle);
         state.plan = plan; state.jsonData = plan.jsonParsed;
         renderPlan(plan);
@@ -234,6 +244,8 @@ const SELECTORS = {
           try {
             const plan = state.workflow === 'lil-snack-day' 
               ? await buildLilSnackDayPlan(folder.handle)
+              : state.workflow === 'swap'
+              ? await buildSwapPlan(folder.handle)
               : await buildPlanFromFolder(folder.handle);
             plan.dirHandle = folder.handle; // Store handle with plan
             state.batchPlans.push(plan);
@@ -297,6 +309,13 @@ const SELECTORS = {
         list.appendChild(h(`<div><b>Puzzle</b>: <code>${escapeHtml(plan.puzzleFile || '(not found)')}</code></div>`));
         list.appendChild(h(`<div><b>Game Files</b>: ${plan.gameFiles.length ? plan.gameFiles.map(g=>`<code>${escapeHtml(g.name)}</code>`).join(', ') : '(none)'}</div>`));
         list.appendChild(h(`<div><b>Bonus Files</b>: ${plan.bonusFiles.length ? plan.bonusFiles.map(b=>`<code>${escapeHtml(b.name)}</code>`).join(', ') : '(none)'}</div>`));
+      } else if (plan.workflow === 'swap') {
+        list.appendChild(h(`<div><b>Swap ID</b>: <code>${escapeHtml(plan.swapId || '(none)')}</code></div>`));
+        list.appendChild(h(`<div><b>Game Title</b>: <code>${escapeHtml(plan.gameTitle || '(missing)')}</code></div>`));
+        list.appendChild(h(`<div><b>Game Description</b>: <code>${escapeHtml(plan.gameDescription)}</code></div>`));
+        list.appendChild(h(`<div><b>Puzzle</b>: <code>${escapeHtml(plan.puzzleFile || '(not found)')}</code></div>`));
+        list.appendChild(h(`<div><b>Emojis</b>: ${plan.emojis.length ? plan.emojis.map(e=>`<code>${escapeHtml(e.name)}</code>`).join(', ') : '(none)'}</div>`));
+        list.appendChild(h(`<div><b>JSON Rebuses</b>: ${plan.jsonData.rebuses.length}</div>`));
       } else {
         list.appendChild(h(`<div><b>Entry ID</b>: <code>${escapeHtml(plan.entryId || '(none)')}</code></div>`));
         list.appendChild(h(`<div><b>JSON file</b>: <code>${escapeHtml(plan.jsonFile || '(not found)')}</code> (clue → <code>${escapeHtml(plan.gameTitle || '(missing)')}</code>)</div>`));
@@ -442,6 +461,99 @@ const SELECTORS = {
       };
     }
 
+    async function buildSwapPlan(dirHandle){
+      const swapId = dirHandle.name;
+      console.log('[Autofill] buildSwapPlan - Folder name:', swapId);
+      const files = [];
+      for await (const [name, handle] of dirHandle.entries()) {
+        if (handle.kind !== 'file') continue;
+        files.push({ name, handle });
+      }
+      
+      console.log('[Autofill] buildSwapPlan - All files:', files.map(f => f.name));
+      
+      // Find .puz file
+      const puzzle = files.find(f => /\.puz$/i.test(f.name));
+      console.log('[Autofill] buildSwapPlan - Puzzle file:', puzzle?.name || 'NOT FOUND');
+      
+      // Find emojis (same pattern as peacock path)
+      const emojis = files.filter(f => {
+        const match = f.name.match(/_emoji(\d+)\.(png|jpg|jpeg|gif|webp)$/i);
+        return !!match;
+      }).sort((a,b)=> (parseInt(a.name.match(/_emoji(\d+)/i)?.[1]||'0',10) - parseInt(b.name.match(/_emoji(\d+)/i)?.[1]||'0',10)));
+      
+      console.log('[Autofill] buildSwapPlan - Emoji files:', emojis.map(e => e.name));
+      
+      // Extract game title from puzzle filename
+      let gameTitle = '';
+      if (puzzle) {
+        console.log('[Autofill] buildSwapPlan - Attempting to parse title from:', puzzle.name);
+        // Try multiple patterns
+        // Pattern 1: home_swap_cool_guys_puzzle.puz
+        let match = puzzle.name.match(/home_swap_(.+)_puzzle\.puz$/i);
+        if (match) {
+          console.log('[Autofill] buildSwapPlan - Matched pattern 1 (home_swap_X_puzzle.puz):', match[1]);
+          gameTitle = match[1]
+            .split('_')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ');
+        } else {
+          // Pattern 2: try just getting everything before .puz and after last underscore
+          match = puzzle.name.match(/_(\w+)\.puz$/i);
+          if (match) {
+            console.log('[Autofill] buildSwapPlan - Matched pattern 2 (last word before .puz):', match[1]);
+            gameTitle = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+          } else {
+            // Pattern 3: Just remove .puz and capitalize
+            const baseName = puzzle.name.replace(/\.puz$/i, '');
+            console.log('[Autofill] buildSwapPlan - No pattern matched, using base name:', baseName);
+            gameTitle = baseName
+              .split(/[_-]/)
+              .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+              .join(' ');
+          }
+        }
+      }
+      
+      console.log('[Autofill] buildSwapPlan - Extracted game title:', gameTitle);
+      
+      // Build JSON based on emoji count
+      const jsonData = {
+        "creator": "Lil Snack",
+        "rebuses": [
+          {
+            "hintIndex": 1,
+            "replaceLetter": "@"
+          }
+        ],
+        "bonusSwapsAdd": 2,
+        "countdownTime": 240,
+        "randomizeSeed": 0,
+        "autoCleanStart": true,
+        "allowedSwapsAdd": 2
+      };
+      
+      // Add second rebus if there are 2 emojis
+      if (emojis.length >= 2) {
+        jsonData.rebuses.push({
+          "hintIndex": 2,
+          "replaceLetter": "#"
+        });
+      }
+      
+      console.log('[Autofill] buildSwapPlan - Final plan:', { swapId, gameTitle, emojiCount: emojis.length, rebuseCount: jsonData.rebuses.length });
+      
+      return {
+        workflow: 'swap',
+        swapId,
+        gameTitle,
+        gameDescription: 'Drag the letters to solve each clue.',
+        puzzleFile: puzzle?.name || null,
+        emojis: emojis.map(e => ({ name: e.name, handle: e.handle })),
+        jsonData
+      };
+    }
+
     function validateAgainstPage(plan){
       const notes=[];
       
@@ -454,6 +566,13 @@ const SELECTORS = {
         if (!plan.fieldId) notes.push('Field ID missing.');
         if (!plan.title) notes.push('Title could not be extracted from folder name.');
         if (!plan.parsedDate) notes.push('Date could not be parsed from folder name.');
+      } else if (plan.workflow === 'swap') {
+        if (!document.querySelector(SELECTORS.swapId)) notes.push('ID input not found.');
+        if (!document.querySelector(SELECTORS.swapGameTitle)) notes.push('Game Title input not found.');
+        if (!document.querySelector(SELECTORS.swapGameDescription)) notes.push('Game Description input not found.');
+        if (!plan.swapId) notes.push('Swap ID missing.');
+        if (!plan.gameTitle) notes.push('Game title could not be extracted from puzzle filename.');
+        if (!plan.puzzleFile) notes.push('Puzzle (.puz) file not found.');
       } else {
         if (!document.querySelector(SELECTORS.id)) notes.push('ID input not found.');
         if (!document.querySelector(SELECTORS.gameTitle)) notes.push('gameTitle input not found.');
@@ -492,6 +611,103 @@ const SELECTORS = {
           }
           
           status('Lil Snack Day fields filled.');
+        } else if (plan.workflow === 'swap') {
+          // Fill Swap fields with delays and verification
+          console.log('[Autofill] Starting swap field filling');
+          console.log('[Autofill] Plan data:', { swapId: plan.swapId, gameTitle: plan.gameTitle, gameDescription: plan.gameDescription });
+          
+          // Fill ID
+          console.log('[Autofill] Step 1: Filling swap ID:', plan.swapId);
+          setInputValue(SELECTORS.swapId, plan.swapId);
+          await new Promise(r => setTimeout(r, 500));
+          
+          // Fill Game Title - try multiple approaches
+          console.log('[Autofill] Step 2: Filling swap game title:', plan.gameTitle);
+          let titleInput = document.querySelector('#field-gameTitle-en-US');
+          if (!titleInput) titleInput = document.querySelector('[data-field-id="gameTitle"] input[type="text"]');
+          if (!titleInput) titleInput = document.querySelector('input[id*="gameTitle"]');
+          
+          if (!titleInput) {
+            console.error('[Autofill] Game title input not found. Available inputs:', 
+              Array.from(document.querySelectorAll('input[type="text"]')).map(i => ({ id: i.id, dataFieldId: i.closest('[data-field-id]')?.getAttribute('data-field-id') })));
+            throw new Error('Game title input not found on page');
+          }
+          
+          console.log('[Autofill] Found title input:', titleInput);
+          titleInput.scrollIntoView({ block: 'center' });
+          await new Promise(r => setTimeout(r, 200));
+          titleInput.focus();
+          titleInput.value = plan.gameTitle;
+          titleInput.dispatchEvent(new Event('input', { bubbles: true }));
+          titleInput.dispatchEvent(new Event('change', { bubbles: true }));
+          console.log('[Autofill] Title set to:', titleInput.value);
+          await new Promise(r => setTimeout(r, 500));
+          
+          // Fill Game Description
+          console.log('[Autofill] Step 3: Filling swap game description:', plan.gameDescription);
+          const descInput = document.querySelector(SELECTORS.swapGameDescription);
+          if (!descInput) {
+            console.error('[Autofill] Game description input not found');
+            throw new Error('Game description input not found on page');
+          }
+          descInput.scrollIntoView({ block: 'center' });
+          await new Promise(r => setTimeout(r, 200));
+          descInput.focus();
+          descInput.value = plan.gameDescription;
+          descInput.dispatchEvent(new Event('input', { bubbles: true }));
+          descInput.dispatchEvent(new Event('change', { bubbles: true }));
+          console.log('[Autofill] Description set to:', descInput.value);
+          await new Promise(r => setTimeout(r, 500));
+          
+          // Fill JSON field
+          console.log('[Autofill] Step 4: Filling JSON field');
+          console.log('[Autofill] Searching for JSON editor with selector:', SELECTORS.swapJsonEditable);
+          
+          let jsonTarget = document.querySelector(SELECTORS.swapJsonEditable);
+          
+          if (!jsonTarget) {
+            console.log('[Autofill] Primary selector failed, trying alternatives...');
+            
+            // Log what we can find
+            const jsonFieldContainer = document.querySelector('[data-field-id="json"]');
+            console.log('[Autofill] JSON field container found:', !!jsonFieldContainer);
+            
+            if (jsonFieldContainer) {
+              console.log('[Autofill] JSON field container HTML:', jsonFieldContainer.innerHTML.substring(0, 500));
+              
+              // Try various selectors
+              jsonTarget = jsonFieldContainer.querySelector('.cm-content[contenteditable="true"]');
+              if (!jsonTarget) jsonTarget = jsonFieldContainer.querySelector('[contenteditable="true"]');
+              if (!jsonTarget) jsonTarget = jsonFieldContainer.querySelector('.cm-editor .cm-content');
+              if (!jsonTarget) jsonTarget = jsonFieldContainer.querySelector('[data-test-id="json-editor-code-mirror"] [contenteditable]');
+              
+              console.log('[Autofill] Found JSON target with fallback:', !!jsonTarget);
+            }
+            
+            if (!jsonTarget) {
+              // Last resort - show what contenteditable elements exist
+              const allEditables = Array.from(document.querySelectorAll('[contenteditable="true"]'));
+              console.log('[Autofill] All contenteditable elements on page:', allEditables.length);
+              allEditables.forEach((el, idx) => {
+                const fieldId = el.closest('[data-field-id]')?.getAttribute('data-field-id');
+                console.log(`[Autofill] Editable ${idx}: fieldId=${fieldId}, classes=${el.className}`);
+              });
+              
+              throw new Error('JSON editor not found on page');
+            }
+          }
+          
+          const text = JSON.stringify(plan.jsonData, null, 2);
+          console.log('[Autofill] JSON target found, scrolling into view');
+          jsonTarget.scrollIntoView({ block: 'center' });
+          await new Promise(r => setTimeout(r, 300));
+          console.log('[Autofill] Setting JSON content');
+          setCodeMirrorEditable(jsonTarget, text);
+          console.log('[Autofill] JSON set successfully');
+          await new Promise(r => setTimeout(r, 500));
+          
+          console.log('[Autofill] All swap fields filled successfully');
+          status('Swap fields filled.');
         } else {
           // Fill Peacock Path fields
           setInputValue(SELECTORS.id, plan.entryId);
@@ -514,11 +730,18 @@ const SELECTORS = {
     }
 
     function setInputValue(selector, value){
+      console.log('[Autofill] setInputValue - selector:', selector, 'value:', value);
       const el=document.querySelector(selector);
-      if(!el) throw new Error('Element not found: '+selector);
-      el.focus(); el.value=value;
+      if(!el) {
+        console.error('[Autofill] Element not found with selector:', selector);
+        throw new Error('Element not found: '+selector);
+      }
+      console.log('[Autofill] Found element:', el.tagName, el.id, el.className);
+      el.focus(); 
+      el.value=value;
       el.dispatchEvent(new Event('input', { bubbles:true }));
       el.dispatchEvent(new Event('change', { bubbles:true }));
+      console.log('[Autofill] Value set to:', el.value);
     }
     function setCodeMirrorEditable(editableEl, text){
       editableEl.focus();
@@ -534,6 +757,45 @@ const SELECTORS = {
 
       if (plan.workflow === 'lil-snack-day') {
         await uploadLilSnackDayAssets(plan);
+      } else if (plan.workflow === 'swap') {
+        // Swap workflow
+        console.log('[Autofill] Starting swap asset uploads');
+        console.log('[Autofill] Puzzle file:', plan.puzzleFile);
+        console.log('[Autofill] Emojis:', plan.emojis.map(e => e.name));
+        
+        if (plan.puzzleFile) {
+          const puzzleField = document.querySelector(SELECTORS.fieldById('puzzle'));
+          console.log('[Autofill] Puzzle field exists:', !!puzzleField);
+          if (puzzleField) {
+            if (state.abortController?.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+            console.log('[Autofill] Uploading puzzle:', plan.puzzleFile);
+            await addAssetViaModal('puzzle', plan.puzzleFile);
+            console.log('[Autofill] Puzzle uploaded successfully');
+          } else {
+            console.warn('[Autofill] Puzzle field not found on page');
+            status('Puzzle field not found on page.');
+          }
+        } else {
+          console.log('[Autofill] No puzzle file in plan');
+          status('No puzzle file found; skipping.');
+        }
+
+        console.log('[Autofill] Starting emoji uploads, count:', plan.emojis.length);
+        for (let i=0; i<plan.emojis.length; i++) {
+          if (state.abortController?.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          const idx=i+1, fid=`emoji${idx}`, file=plan.emojis[i].name;
+          console.log(`[Autofill] Uploading emoji ${idx}:`, file);
+          const emojiField = document.querySelector(SELECTORS.fieldById(fid));
+          console.log(`[Autofill] Emoji field ${fid} exists:`, !!emojiField);
+          if (emojiField) {
+            await addAssetViaModal(fid, file);
+            console.log(`[Autofill] Emoji ${idx} uploaded successfully`);
+          } else {
+            console.warn(`[Autofill] Field ${fid} not found on page`);
+            status(`Field ${fid} not on page; skipped ${file}.`);
+          }
+        }
+        console.log('[Autofill] All swap assets uploaded');
       } else {
         // Peacock Path workflow
         if (plan.puzzleFile && document.querySelector(SELECTORS.fieldById('puzzle'))) {
@@ -1231,8 +1493,14 @@ const SELECTORS = {
             console.log(`[Autofill] Step 4: Filling fields for ${folderName}`);
             await fillFields(plan, { setJson: chkJson.checked });
             
+            // Wait for fields to settle before starting uploads
+            await new Promise(r => setTimeout(r, 1000));
+            
             console.log(`[Autofill] Step 5: Uploading assets for ${folderName}`);
             await uploadAllAssets(plan);
+            
+            // Wait for uploads to complete and UI to settle
+            await new Promise(r => setTimeout(r, 1500));
             
             status(`[${i + 1}/${state.batchPlans.length}] ✓ Completed: ${folderName}`);
             console.log(`[Autofill] Completed: ${folderName}`);
