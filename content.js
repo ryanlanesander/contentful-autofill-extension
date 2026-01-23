@@ -14,6 +14,12 @@ const SELECTORS = {
   dateInput: '[aria-label="Enter date"]',
   shareCoinType: '[data-field-id="shareCoinType"]',
   
+  // Swap selectors
+  swapId: '[data-field-id="id"] input[type="text"]',
+  swapGameTitle: '#field-gameTitle-en-US, [data-field-id="gameTitle"] input[type="text"]',
+  swapGameDescription: '[data-field-id="gameDescription"] textarea, [data-field-id="gameDescription"] input[type="text"]',
+  swapJsonEditable: '[data-test-id="json-editor-code-mirror"] .cm-content[contenteditable="true"]',
+  
   // Common selectors
   fieldById: fid => `[data-field-id="${fid}"]`,
   trgAddMedia: '[data-test-id="link-actions-menu-trigger"]',
@@ -57,19 +63,26 @@ const SELECTORS = {
             <select id="cfaf-workflow" style="padding: 6px; border-radius: 6px; border: 1px solid #dadde2;">
               <option value="peacock-path">Peacock Path</option>
               <option value="lil-snack-day">Lil Snack Day</option>
+              <option value="swap">Swap</option>
             </select>
           </label>
         </div>
         <div class="cfaf-row">
           <button id="cfaf-pick-folder">Pick Folder</button>
-          <button id="cfaf-dry-run" disabled>Dry-run</button>
+          <button id="cfaf-pick-batch">Pick Multiple Folders</button>
         </div>
         <div class="cfaf-row">
+          <button id="cfaf-dry-run" disabled>Dry-run</button>
           <button id="cfaf-fill" disabled>Fill fields</button>
+        </div>
+        <div class="cfaf-row">
           <label class="cfaf-chk"><input type="checkbox" id="cfaf-set-json"> Also set JSON</label>
         </div>
         <div class="cfaf-row">
           <button id="cfaf-fill-upload" disabled>Fill + Upload</button>
+          <button id="cfaf-batch-upload" disabled>Batch Upload All</button>
+        </div>
+        <div class="cfaf-row">
           <button id="cfaf-cancel" disabled>Cancel</button>
         </div>
         <div id="cfaf-status" class="cfaf-status">Ready.</div>
@@ -105,16 +118,27 @@ const SELECTORS = {
         const r=panel.getBoundingClientRect(); localStorage.setItem('cfaf_pos', JSON.stringify({x:r.left,y:r.top})); }
     })();
 
-    const state = { dirHandle: null, plan: null, jsonData: null, abortController: null, workflow: 'peacock-path' };
+    const state = { 
+      dirHandle: null, 
+      plan: null, 
+      jsonData: null, 
+      abortController: null, 
+      workflow: 'peacock-path',
+      batchFolders: [],
+      batchPlans: [],
+      batchErrors: []
+    };
     const $ = sel => document.querySelector(sel);
     const statusEl = $('#cfaf-status');
     const planEl = $('#cfaf-plan');
 
     const workflowSelect = $('#cfaf-workflow');
     const btnPick = $('#cfaf-pick-folder');
+    const btnPickBatch = $('#cfaf-pick-batch');
     const btnDry = $('#cfaf-dry-run');
     const btnFill = $('#cfaf-fill');
     const btnFillUpload = $('#cfaf-fill-upload');
+    const btnBatchUpload = $('#cfaf-batch-upload');
     const btnCancel = $('#cfaf-cancel');
     const chkJson = $('#cfaf-set-json');
 
@@ -126,10 +150,12 @@ const SELECTORS = {
       btnDry.disabled = true;
       btnFill.disabled = true;
       btnFillUpload.disabled = true;
-      status(`Workflow changed to: ${workflowSelect.value === 'peacock-path' ? 'Peacock Path' : 'Lil Snack Day'}`);
+      const workflowNames = {'peacock-path': 'Peacock Path', 'lil-snack-day': 'Lil Snack Day', 'swap': 'Swap'};
+      status(`Workflow changed to: ${workflowNames[workflowSelect.value] || workflowSelect.value}`);
     });
 
     btnPick.addEventListener('click', pickFolder);
+    btnPickBatch.addEventListener('click', pickBatchFolders);
     btnDry.addEventListener('click', dryRun);
     btnFill.addEventListener('click', () => fillFields(state.plan, { setJson: chkJson.checked }));
     btnFillUpload.addEventListener('click', async () => {
@@ -152,6 +178,7 @@ const SELECTORS = {
         state.abortController = null;
       }
     });
+    btnBatchUpload.addEventListener('click', batchUploadAll);
     btnCancel.addEventListener('click', () => {
       if (state.abortController) {
         state.abortController.abort();
@@ -172,12 +199,92 @@ const SELECTORS = {
         window._cfaf_dirHandle = handle;
         const plan = state.workflow === 'lil-snack-day' 
           ? await buildLilSnackDayPlan(handle)
+          : state.workflow === 'swap'
+          ? await buildSwapPlan(handle)
           : await buildPlanFromFolder(handle);
         state.plan = plan; state.jsonData = plan.jsonParsed;
         renderPlan(plan);
         status('Folder parsed. Ready.');
         btnDry.disabled = false; btnFill.disabled = false; btnFillUpload.disabled = false;
       } catch (e) { status('Folder pick failed: ' + (e?.message || e)); console.error(e); }
+    }
+
+    async function pickBatchFolders() {
+      try {
+        status('Opening folder picker for parent directory…');
+        if (!window.showDirectoryPicker) throw new Error('showDirectoryPicker not supported.');
+        
+        // Ask user to select parent folder containing all the subfolders
+        const parentHandle = await window.showDirectoryPicker({ mode: 'read' });
+        
+        // Collect all subdirectories
+        const folders = [];
+        for await (const [name, handle] of parentHandle.entries()) {
+          if (handle.kind === 'directory') {
+            folders.push({ name, handle });
+          }
+        }
+        
+        if (folders.length === 0) {
+          status('No subfolders found in selected directory.');
+          return;
+        }
+        
+        // Sort folders by name
+        folders.sort((a, b) => a.name.localeCompare(b.name));
+        
+        status(`Found ${folders.length} folder(s). Building plans…`);
+        
+        // Build plans for all folders
+        state.batchFolders = folders;
+        state.batchPlans = [];
+        state.batchErrors = [];
+        
+        for (const folder of folders) {
+          try {
+            const plan = state.workflow === 'lil-snack-day' 
+              ? await buildLilSnackDayPlan(folder.handle)
+              : state.workflow === 'swap'
+              ? await buildSwapPlan(folder.handle)
+              : await buildPlanFromFolder(folder.handle);
+            plan.dirHandle = folder.handle; // Store handle with plan
+            state.batchPlans.push(plan);
+          } catch (e) {
+            console.error(`Error building plan for ${folder.name}:`, e);
+            state.batchErrors.push(`Plan error for ${folder.name}: ${e?.message || e}`);
+          }
+        }
+        
+        renderBatchPlan(state.batchPlans);
+        status(`Batch ready: ${state.batchPlans.length} folder(s) queued.`);
+        btnBatchUpload.disabled = false;
+        
+      } catch (e) { 
+        status('Batch folder pick failed: ' + (e?.message || e)); 
+        console.error(e); 
+      }
+    }
+
+    function renderBatchPlan(plans) {
+      planEl.innerHTML = '';
+      const list = document.createElement('div');
+      list.className = 'cfaf-list';
+      
+      list.appendChild(h(`<div><strong>Batch Upload Queue (${plans.length} folders):</strong></div>`));
+      
+      plans.forEach((plan, idx) => {
+        const folderName = plan.folderName || plan.entryId || `Folder ${idx + 1}`;
+        list.appendChild(h(`<div>${idx + 1}. <code>${escapeHtml(folderName)}</code></div>`));
+      });
+      
+      if (state.batchErrors.length > 0) {
+        list.appendChild(h(`<div style="color: orange; margin-top: 10px;"><strong>Errors during plan building:</strong></div>`));
+        state.batchErrors.forEach(err => {
+          list.appendChild(h(`<div style="color: orange; font-size: 11px;">⚠ ${escapeHtml(err)}</div>`));
+        });
+      }
+      
+      planEl.appendChild(list);
     }
 
     async function dryRun() {
@@ -202,6 +309,13 @@ const SELECTORS = {
         list.appendChild(h(`<div><b>Puzzle</b>: <code>${escapeHtml(plan.puzzleFile || '(not found)')}</code></div>`));
         list.appendChild(h(`<div><b>Game Files</b>: ${plan.gameFiles.length ? plan.gameFiles.map(g=>`<code>${escapeHtml(g.name)}</code>`).join(', ') : '(none)'}</div>`));
         list.appendChild(h(`<div><b>Bonus Files</b>: ${plan.bonusFiles.length ? plan.bonusFiles.map(b=>`<code>${escapeHtml(b.name)}</code>`).join(', ') : '(none)'}</div>`));
+      } else if (plan.workflow === 'swap') {
+        list.appendChild(h(`<div><b>Swap ID</b>: <code>${escapeHtml(plan.swapId || '(none)')}</code></div>`));
+        list.appendChild(h(`<div><b>Game Title</b>: <code>${escapeHtml(plan.gameTitle || '(missing)')}</code></div>`));
+        list.appendChild(h(`<div><b>Game Description</b>: <code>${escapeHtml(plan.gameDescription)}</code></div>`));
+        list.appendChild(h(`<div><b>Puzzle</b>: <code>${escapeHtml(plan.puzzleFile || '(not found)')}</code></div>`));
+        list.appendChild(h(`<div><b>Emojis</b>: ${plan.emojis.length ? plan.emojis.map(e=>`<code>${escapeHtml(e.name)}</code>`).join(', ') : '(none)'}</div>`));
+        list.appendChild(h(`<div><b>JSON Rebuses</b>: ${plan.jsonData.rebuses.length}</div>`));
       } else {
         list.appendChild(h(`<div><b>Entry ID</b>: <code>${escapeHtml(plan.entryId || '(none)')}</code></div>`));
         list.appendChild(h(`<div><b>JSON file</b>: <code>${escapeHtml(plan.jsonFile || '(not found)')}</code> (clue → <code>${escapeHtml(plan.gameTitle || '(missing)')}</code>)</div>`));
@@ -347,6 +461,99 @@ const SELECTORS = {
       };
     }
 
+    async function buildSwapPlan(dirHandle){
+      const swapId = dirHandle.name;
+      console.log('[Autofill] buildSwapPlan - Folder name:', swapId);
+      const files = [];
+      for await (const [name, handle] of dirHandle.entries()) {
+        if (handle.kind !== 'file') continue;
+        files.push({ name, handle });
+      }
+      
+      console.log('[Autofill] buildSwapPlan - All files:', files.map(f => f.name));
+      
+      // Find .puz file
+      const puzzle = files.find(f => /\.puz$/i.test(f.name));
+      console.log('[Autofill] buildSwapPlan - Puzzle file:', puzzle?.name || 'NOT FOUND');
+      
+      // Find emojis (same pattern as peacock path)
+      const emojis = files.filter(f => {
+        const match = f.name.match(/_emoji(\d+)\.(png|jpg|jpeg|gif|webp)$/i);
+        return !!match;
+      }).sort((a,b)=> (parseInt(a.name.match(/_emoji(\d+)/i)?.[1]||'0',10) - parseInt(b.name.match(/_emoji(\d+)/i)?.[1]||'0',10)));
+      
+      console.log('[Autofill] buildSwapPlan - Emoji files:', emojis.map(e => e.name));
+      
+      // Extract game title from puzzle filename
+      let gameTitle = '';
+      if (puzzle) {
+        console.log('[Autofill] buildSwapPlan - Attempting to parse title from:', puzzle.name);
+        // Try multiple patterns
+        // Pattern 1: home_swap_cool_guys_puzzle.puz
+        let match = puzzle.name.match(/home_swap_(.+)_puzzle\.puz$/i);
+        if (match) {
+          console.log('[Autofill] buildSwapPlan - Matched pattern 1 (home_swap_X_puzzle.puz):', match[1]);
+          gameTitle = match[1]
+            .split('_')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ');
+        } else {
+          // Pattern 2: try just getting everything before .puz and after last underscore
+          match = puzzle.name.match(/_(\w+)\.puz$/i);
+          if (match) {
+            console.log('[Autofill] buildSwapPlan - Matched pattern 2 (last word before .puz):', match[1]);
+            gameTitle = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+          } else {
+            // Pattern 3: Just remove .puz and capitalize
+            const baseName = puzzle.name.replace(/\.puz$/i, '');
+            console.log('[Autofill] buildSwapPlan - No pattern matched, using base name:', baseName);
+            gameTitle = baseName
+              .split(/[_-]/)
+              .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+              .join(' ');
+          }
+        }
+      }
+      
+      console.log('[Autofill] buildSwapPlan - Extracted game title:', gameTitle);
+      
+      // Build JSON based on emoji count
+      const jsonData = {
+        "creator": "Lil Snack",
+        "rebuses": [
+          {
+            "hintIndex": 1,
+            "replaceLetter": "@"
+          }
+        ],
+        "bonusSwapsAdd": 2,
+        "countdownTime": 240,
+        "randomizeSeed": 0,
+        "autoCleanStart": true,
+        "allowedSwapsAdd": 2
+      };
+      
+      // Add second rebus if there are 2 emojis
+      if (emojis.length >= 2) {
+        jsonData.rebuses.push({
+          "hintIndex": 2,
+          "replaceLetter": "#"
+        });
+      }
+      
+      console.log('[Autofill] buildSwapPlan - Final plan:', { swapId, gameTitle, emojiCount: emojis.length, rebuseCount: jsonData.rebuses.length });
+      
+      return {
+        workflow: 'swap',
+        swapId,
+        gameTitle,
+        gameDescription: 'Drag the letters to solve each clue.',
+        puzzleFile: puzzle?.name || null,
+        emojis: emojis.map(e => ({ name: e.name, handle: e.handle })),
+        jsonData
+      };
+    }
+
     function validateAgainstPage(plan){
       const notes=[];
       
@@ -359,6 +566,13 @@ const SELECTORS = {
         if (!plan.fieldId) notes.push('Field ID missing.');
         if (!plan.title) notes.push('Title could not be extracted from folder name.');
         if (!plan.parsedDate) notes.push('Date could not be parsed from folder name.');
+      } else if (plan.workflow === 'swap') {
+        if (!document.querySelector(SELECTORS.swapId)) notes.push('ID input not found.');
+        if (!document.querySelector(SELECTORS.swapGameTitle)) notes.push('Game Title input not found.');
+        if (!document.querySelector(SELECTORS.swapGameDescription)) notes.push('Game Description input not found.');
+        if (!plan.swapId) notes.push('Swap ID missing.');
+        if (!plan.gameTitle) notes.push('Game title could not be extracted from puzzle filename.');
+        if (!plan.puzzleFile) notes.push('Puzzle (.puz) file not found.');
       } else {
         if (!document.querySelector(SELECTORS.id)) notes.push('ID input not found.');
         if (!document.querySelector(SELECTORS.gameTitle)) notes.push('gameTitle input not found.');
@@ -397,6 +611,103 @@ const SELECTORS = {
           }
           
           status('Lil Snack Day fields filled.');
+        } else if (plan.workflow === 'swap') {
+          // Fill Swap fields with delays and verification
+          console.log('[Autofill] Starting swap field filling');
+          console.log('[Autofill] Plan data:', { swapId: plan.swapId, gameTitle: plan.gameTitle, gameDescription: plan.gameDescription });
+          
+          // Fill ID
+          console.log('[Autofill] Step 1: Filling swap ID:', plan.swapId);
+          setInputValue(SELECTORS.swapId, plan.swapId);
+          await new Promise(r => setTimeout(r, 500));
+          
+          // Fill Game Title - try multiple approaches
+          console.log('[Autofill] Step 2: Filling swap game title:', plan.gameTitle);
+          let titleInput = document.querySelector('#field-gameTitle-en-US');
+          if (!titleInput) titleInput = document.querySelector('[data-field-id="gameTitle"] input[type="text"]');
+          if (!titleInput) titleInput = document.querySelector('input[id*="gameTitle"]');
+          
+          if (!titleInput) {
+            console.error('[Autofill] Game title input not found. Available inputs:', 
+              Array.from(document.querySelectorAll('input[type="text"]')).map(i => ({ id: i.id, dataFieldId: i.closest('[data-field-id]')?.getAttribute('data-field-id') })));
+            throw new Error('Game title input not found on page');
+          }
+          
+          console.log('[Autofill] Found title input:', titleInput);
+          titleInput.scrollIntoView({ block: 'center' });
+          await new Promise(r => setTimeout(r, 200));
+          titleInput.focus();
+          titleInput.value = plan.gameTitle;
+          titleInput.dispatchEvent(new Event('input', { bubbles: true }));
+          titleInput.dispatchEvent(new Event('change', { bubbles: true }));
+          console.log('[Autofill] Title set to:', titleInput.value);
+          await new Promise(r => setTimeout(r, 500));
+          
+          // Fill Game Description
+          console.log('[Autofill] Step 3: Filling swap game description:', plan.gameDescription);
+          const descInput = document.querySelector(SELECTORS.swapGameDescription);
+          if (!descInput) {
+            console.error('[Autofill] Game description input not found');
+            throw new Error('Game description input not found on page');
+          }
+          descInput.scrollIntoView({ block: 'center' });
+          await new Promise(r => setTimeout(r, 200));
+          descInput.focus();
+          descInput.value = plan.gameDescription;
+          descInput.dispatchEvent(new Event('input', { bubbles: true }));
+          descInput.dispatchEvent(new Event('change', { bubbles: true }));
+          console.log('[Autofill] Description set to:', descInput.value);
+          await new Promise(r => setTimeout(r, 500));
+          
+          // Fill JSON field
+          console.log('[Autofill] Step 4: Filling JSON field');
+          console.log('[Autofill] Searching for JSON editor with selector:', SELECTORS.swapJsonEditable);
+          
+          let jsonTarget = document.querySelector(SELECTORS.swapJsonEditable);
+          
+          if (!jsonTarget) {
+            console.log('[Autofill] Primary selector failed, trying alternatives...');
+            
+            // Log what we can find
+            const jsonFieldContainer = document.querySelector('[data-field-id="json"]');
+            console.log('[Autofill] JSON field container found:', !!jsonFieldContainer);
+            
+            if (jsonFieldContainer) {
+              console.log('[Autofill] JSON field container HTML:', jsonFieldContainer.innerHTML.substring(0, 500));
+              
+              // Try various selectors
+              jsonTarget = jsonFieldContainer.querySelector('.cm-content[contenteditable="true"]');
+              if (!jsonTarget) jsonTarget = jsonFieldContainer.querySelector('[contenteditable="true"]');
+              if (!jsonTarget) jsonTarget = jsonFieldContainer.querySelector('.cm-editor .cm-content');
+              if (!jsonTarget) jsonTarget = jsonFieldContainer.querySelector('[data-test-id="json-editor-code-mirror"] [contenteditable]');
+              
+              console.log('[Autofill] Found JSON target with fallback:', !!jsonTarget);
+            }
+            
+            if (!jsonTarget) {
+              // Last resort - show what contenteditable elements exist
+              const allEditables = Array.from(document.querySelectorAll('[contenteditable="true"]'));
+              console.log('[Autofill] All contenteditable elements on page:', allEditables.length);
+              allEditables.forEach((el, idx) => {
+                const fieldId = el.closest('[data-field-id]')?.getAttribute('data-field-id');
+                console.log(`[Autofill] Editable ${idx}: fieldId=${fieldId}, classes=${el.className}`);
+              });
+              
+              throw new Error('JSON editor not found on page');
+            }
+          }
+          
+          const text = JSON.stringify(plan.jsonData, null, 2);
+          console.log('[Autofill] JSON target found, scrolling into view');
+          jsonTarget.scrollIntoView({ block: 'center' });
+          await new Promise(r => setTimeout(r, 300));
+          console.log('[Autofill] Setting JSON content');
+          setCodeMirrorEditable(jsonTarget, text);
+          console.log('[Autofill] JSON set successfully');
+          await new Promise(r => setTimeout(r, 500));
+          
+          console.log('[Autofill] All swap fields filled successfully');
+          status('Swap fields filled.');
         } else {
           // Fill Peacock Path fields
           setInputValue(SELECTORS.id, plan.entryId);
@@ -419,11 +730,18 @@ const SELECTORS = {
     }
 
     function setInputValue(selector, value){
+      console.log('[Autofill] setInputValue - selector:', selector, 'value:', value);
       const el=document.querySelector(selector);
-      if(!el) throw new Error('Element not found: '+selector);
-      el.focus(); el.value=value;
+      if(!el) {
+        console.error('[Autofill] Element not found with selector:', selector);
+        throw new Error('Element not found: '+selector);
+      }
+      console.log('[Autofill] Found element:', el.tagName, el.id, el.className);
+      el.focus(); 
+      el.value=value;
       el.dispatchEvent(new Event('input', { bubbles:true }));
       el.dispatchEvent(new Event('change', { bubbles:true }));
+      console.log('[Autofill] Value set to:', el.value);
     }
     function setCodeMirrorEditable(editableEl, text){
       editableEl.focus();
@@ -439,6 +757,45 @@ const SELECTORS = {
 
       if (plan.workflow === 'lil-snack-day') {
         await uploadLilSnackDayAssets(plan);
+      } else if (plan.workflow === 'swap') {
+        // Swap workflow
+        console.log('[Autofill] Starting swap asset uploads');
+        console.log('[Autofill] Puzzle file:', plan.puzzleFile);
+        console.log('[Autofill] Emojis:', plan.emojis.map(e => e.name));
+        
+        if (plan.puzzleFile) {
+          const puzzleField = document.querySelector(SELECTORS.fieldById('puzzle'));
+          console.log('[Autofill] Puzzle field exists:', !!puzzleField);
+          if (puzzleField) {
+            if (state.abortController?.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+            console.log('[Autofill] Uploading puzzle:', plan.puzzleFile);
+            await addAssetViaModal('puzzle', plan.puzzleFile);
+            console.log('[Autofill] Puzzle uploaded successfully');
+          } else {
+            console.warn('[Autofill] Puzzle field not found on page');
+            status('Puzzle field not found on page.');
+          }
+        } else {
+          console.log('[Autofill] No puzzle file in plan');
+          status('No puzzle file found; skipping.');
+        }
+
+        console.log('[Autofill] Starting emoji uploads, count:', plan.emojis.length);
+        for (let i=0; i<plan.emojis.length; i++) {
+          if (state.abortController?.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          const idx=i+1, fid=`emoji${idx}`, file=plan.emojis[i].name;
+          console.log(`[Autofill] Uploading emoji ${idx}:`, file);
+          const emojiField = document.querySelector(SELECTORS.fieldById(fid));
+          console.log(`[Autofill] Emoji field ${fid} exists:`, !!emojiField);
+          if (emojiField) {
+            await addAssetViaModal(fid, file);
+            console.log(`[Autofill] Emoji ${idx} uploaded successfully`);
+          } else {
+            console.warn(`[Autofill] Field ${fid} not found on page`);
+            status(`Field ${fid} not on page; skipped ${file}.`);
+          }
+        }
+        console.log('[Autofill] All swap assets uploaded');
       } else {
         // Peacock Path workflow
         if (plan.puzzleFile && document.querySelector(SELECTORS.fieldById('puzzle'))) {
@@ -926,6 +1283,270 @@ const SELECTORS = {
     function activeModal(){
       const all = Array.from(document.querySelectorAll(SELECTORS.modalRoot));
       return all[all.length - 1] || null;
+    }
+
+    async function duplicateEntry() {
+      try {
+        status('Duplicating entry...');
+        console.log('[Autofill] Starting duplicate entry process');
+        
+        // Wait a moment for page to be ready
+        await new Promise(r => setTimeout(r, 500));
+        
+        // Store current URL to detect navigation
+        const originalUrl = window.location.href;
+        console.log('[Autofill] Current URL:', originalUrl);
+        
+        // Find the entry actions button (the three-dot menu)
+        const entryActionsBtn = await waitFor(() => {
+          const buttons = Array.from(document.querySelectorAll('button[aria-label="Entry actions"][aria-haspopup="menu"]'));
+          return buttons[0] || null;
+        }, 8000);
+        
+        if (!entryActionsBtn) {
+          throw new Error('Entry actions button not found');
+        }
+        
+        console.log('[Autofill] Found entry actions button');
+        entryActionsBtn.scrollIntoView({ block: 'center' });
+        await new Promise(r => setTimeout(r, 300));
+        entryActionsBtn.click();
+        
+        // Wait for the menu to appear
+        await new Promise(r => setTimeout(r, 500));
+        
+        // Find the duplicate button in the menu
+        const duplicateBtn = await waitFor(() => {
+          const buttons = Array.from(document.querySelectorAll('button[data-test-id="cf-ui-button-action-duplicate"]'));
+          return buttons.find(b => b.textContent.trim().toLowerCase().includes('duplicate')) || null;
+        }, 5000);
+        
+        if (!duplicateBtn) {
+          throw new Error('Duplicate button not found in menu');
+        }
+        
+        console.log('[Autofill] Found duplicate button, clicking...');
+        duplicateBtn.click();
+        
+        // Wait for URL to change (navigation to duplicated entry)
+        console.log('[Autofill] Waiting for page navigation...');
+        await waitFor(() => window.location.href !== originalUrl, 10000);
+        console.log('[Autofill] URL changed to:', window.location.href);
+        
+        // Wait for the new page to fully load and be interactive
+        await new Promise(r => setTimeout(r, 2000));
+        
+        // Wait for key UI elements to be present
+        await waitFor(() => {
+          const hasInputs = document.querySelectorAll('input[type="text"]').length > 0;
+          const hasPanel = document.getElementById('cf-autofill-panel');
+          return hasInputs && hasPanel;
+        }, 10000);
+        
+        console.log('[Autofill] Entry duplicated and page loaded successfully');
+        status('Entry duplicated. Ready for next upload.');
+        
+      } catch (e) {
+        console.error('[Autofill] Error duplicating entry:', e);
+        status(`Failed to duplicate entry: ${e?.message || e}`);
+        throw e;
+      }
+    }
+
+    async function clearAllFields() {
+      try {
+        status('Clearing all fields...');
+        console.log('[Autofill] Starting to clear all fields');
+        
+        // Wait for page to be ready
+        await new Promise(r => setTimeout(r, 1000));
+        
+        // Clear text input fields - but skip the autofill panel inputs
+        const textInputs = document.querySelectorAll('input[type="text"], input[type="date"], textarea');
+        console.log(`[Autofill] Found ${textInputs.length} text inputs to potentially clear`);
+        
+        let clearedCount = 0;
+        textInputs.forEach(input => {
+          // Skip inputs inside our autofill panel
+          if (input.closest('#cf-autofill-panel')) return;
+          
+          if (input.value && input.value.trim()) {
+            try {
+              input.focus();
+              input.value = '';
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+              input.dispatchEvent(new Event('change', { bubbles: true }));
+              clearedCount++;
+            } catch (e) {
+              console.warn('[Autofill] Error clearing input:', e);
+            }
+          }
+        });
+        
+        console.log(`[Autofill] Cleared ${clearedCount} text fields`);
+        
+        // Clear any contenteditable fields (like JSON editor)
+        const editableFields = document.querySelectorAll('[contenteditable="true"]');
+        console.log(`[Autofill] Found ${editableFields.length} editable fields`);
+        
+        editableFields.forEach(field => {
+          if (field.textContent && field.textContent.trim()) {
+            try {
+              field.focus();
+              field.textContent = '';
+              field.dispatchEvent(new Event('input', { bubbles: true }));
+            } catch (e) {
+              console.warn('[Autofill] Error clearing editable field:', e);
+            }
+          }
+        });
+        
+        console.log('[Autofill] Text fields cleared, now removing linked assets...');
+        
+        // Remove linked assets (puzzle, emojis, etc.) by clicking their action menu and remove button
+        const cardActionButtons = document.querySelectorAll('button[data-test-id="cf-ui-card-actions"]');
+        console.log(`[Autofill] Found ${cardActionButtons.length} asset cards to remove`);
+        
+        for (const actionBtn of cardActionButtons) {
+          try {
+            // Skip if it's inside our autofill panel
+            if (actionBtn.closest('#cf-autofill-panel')) continue;
+            
+            console.log('[Autofill] Clicking card action button...');
+            actionBtn.scrollIntoView({ block: 'center' });
+            await new Promise(r => setTimeout(r, 200));
+            actionBtn.click();
+            
+            // Wait for dropdown menu to appear
+            await new Promise(r => setTimeout(r, 300));
+            
+            // Find and click the Remove button in the dropdown
+            const removeBtn = await waitFor(() => {
+              const buttons = Array.from(document.querySelectorAll('button[data-test-id="card-action-remove"]'));
+              return buttons.find(b => b.textContent.trim().toLowerCase().includes('remove')) || null;
+            }, 3000).catch(() => null);
+            
+            if (removeBtn) {
+              console.log('[Autofill] Clicking remove button...');
+              removeBtn.click();
+              await new Promise(r => setTimeout(r, 300));
+            } else {
+              console.warn('[Autofill] Remove button not found for asset card');
+            }
+            
+          } catch (e) {
+            console.warn('[Autofill] Error removing asset card:', e);
+            // Continue to next card even if this one fails
+          }
+        }
+        
+        console.log('[Autofill] Fields and assets cleared successfully');
+        status('All fields cleared.');
+        
+      } catch (e) {
+        console.error('[Autofill] Error clearing fields:', e);
+        status(`Failed to clear fields: ${e?.message || e}`);
+        throw e;
+      }
+    }
+
+    async function batchUploadAll() {
+      if (state.batchPlans.length === 0) {
+        status('No folders in batch queue.');
+        return;
+      }
+      
+      try {
+        state.abortController = new AbortController();
+        btnBatchUpload.disabled = true;
+        btnCancel.disabled = false;
+        state.batchErrors = [];
+        
+        status(`Starting batch upload: ${state.batchPlans.length} folder(s)…`);
+        
+        for (let i = 0; i < state.batchPlans.length; i++) {
+          if (state.abortController?.signal.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
+          }
+          
+          const plan = state.batchPlans[i];
+          const folderName = plan.folderName || plan.entryId || `Folder ${i + 1}`;
+          
+          try {
+            status(`[${i + 1}/${state.batchPlans.length}] Processing: ${folderName}…`);
+            console.log(`[Autofill] Processing batch item ${i + 1}/${state.batchPlans.length}: ${folderName}`);
+            
+            // If this is NOT the first folder, duplicate the entry
+            if (i > 0) {
+              console.log(`[Autofill] Step 1: Duplicating entry for ${folderName}`);
+              await duplicateEntry();
+              
+              console.log(`[Autofill] Step 2: Clearing fields for ${folderName}`);
+              await clearAllFields();
+            }
+            
+            // Set the dirHandle for this specific plan
+            state.dirHandle = plan.dirHandle;
+            console.log(`[Autofill] Step 3: Set dirHandle for ${folderName}`);
+            
+            // Fill fields and upload assets for this folder
+            console.log(`[Autofill] Step 4: Filling fields for ${folderName}`);
+            await fillFields(plan, { setJson: chkJson.checked });
+            
+            // Wait for fields to settle before starting uploads
+            await new Promise(r => setTimeout(r, 1000));
+            
+            console.log(`[Autofill] Step 5: Uploading assets for ${folderName}`);
+            await uploadAllAssets(plan);
+            
+            // Wait for uploads to complete and UI to settle
+            await new Promise(r => setTimeout(r, 1500));
+            
+            status(`[${i + 1}/${state.batchPlans.length}] ✓ Completed: ${folderName}`);
+            console.log(`[Autofill] Completed: ${folderName}`);
+            
+            // Wait a bit between uploads to let the UI settle
+            if (i < state.batchPlans.length - 1) {
+              await new Promise(r => setTimeout(r, 1000));
+            }
+            
+          } catch (e) {
+            const errorMsg = `Error on ${folderName}: ${e?.message || e}`;
+            console.error(`[Autofill] ${errorMsg}`, e);
+            state.batchErrors.push(errorMsg);
+            
+            // Continue with next folder instead of stopping
+            status(`[${i + 1}/${state.batchPlans.length}] ✗ Error: ${folderName} - ${e?.message || e}`);
+          }
+        }
+        
+        // Show final summary
+        const successCount = state.batchPlans.length - state.batchErrors.length;
+        let summary = `Batch complete! ${successCount}/${state.batchPlans.length} succeeded.`;
+        
+        if (state.batchErrors.length > 0) {
+          summary += '\\n\\nErrors encountered:';
+          state.batchErrors.forEach((err, idx) => {
+            summary += `\\n${idx + 1}. ${err}`;
+          });
+          console.error('[Autofill] Batch errors:', state.batchErrors);
+        }
+        
+        status(summary);
+        alert(summary);
+        
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          status('Batch upload cancelled.');
+        } else {
+          status('Batch upload failed: ' + (e?.message || e));
+          console.error(e);
+        }
+      } finally {
+        btnBatchUpload.disabled = false;
+        btnCancel.disabled = true;
+        state.abortController = null;
+      }
     }
 
     function waitFor(fn, timeoutMs=8000, interval=120){
