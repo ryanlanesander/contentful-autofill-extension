@@ -232,6 +232,10 @@ const SELECTORS = {
         
         // Sort folders by name
         folders.sort((a, b) => a.name.localeCompare(b.name));
+
+        const swapTitles = state.workflow === 'swap'
+          ? await readSwapTitles(parentHandle)
+          : [];
         
         status(`Found ${folders.length} folder(s). Building plans…`);
         
@@ -240,13 +244,21 @@ const SELECTORS = {
         state.batchPlans = [];
         state.batchErrors = [];
         
-        for (const folder of folders) {
+        for (let i = 0; i < folders.length; i++) {
+          const folder = folders[i];
           try {
             const plan = state.workflow === 'lil-snack-day' 
               ? await buildLilSnackDayPlan(folder.handle)
               : state.workflow === 'swap'
               ? await buildSwapPlan(folder.handle)
               : await buildPlanFromFolder(folder.handle);
+
+            if (plan.workflow === 'swap' && swapTitles.length > 0) {
+              const titleFromList = swapTitles[i];
+              if (titleFromList) {
+                plan.gameTitle = titleFromList;
+              }
+            }
             plan.dirHandle = folder.handle; // Store handle with plan
             state.batchPlans.push(plan);
           } catch (e) {
@@ -273,8 +285,10 @@ const SELECTORS = {
       list.appendChild(h(`<div><strong>Batch Upload Queue (${plans.length} folders):</strong></div>`));
       
       plans.forEach((plan, idx) => {
-        const folderName = plan.folderName || plan.entryId || `Folder ${idx + 1}`;
-        list.appendChild(h(`<div>${idx + 1}. <code>${escapeHtml(folderName)}</code></div>`));
+        const displayName = plan.workflow === 'swap' && plan.gameTitle
+          ? plan.gameTitle
+          : (plan.folderName || plan.entryId || `Folder ${idx + 1}`);
+        list.appendChild(h(`<div>${idx + 1}. <code>${escapeHtml(displayName)}</code></div>`));
       });
       
       if (state.batchErrors.length > 0) {
@@ -285,6 +299,32 @@ const SELECTORS = {
       }
       
       planEl.appendChild(list);
+    }
+
+    async function readSwapTitles(parentHandle) {
+      try {
+        const fileHandle = await findSwapTitlesFile(parentHandle);
+        if (!fileHandle) return [];
+        const file = await fileHandle.getFile();
+        const text = await file.text();
+        return text
+          .split(/\r?\n/)
+          .map(line => line.trim())
+          .filter(line => line.length > 0);
+      } catch (e) {
+        console.warn('[Autofill] Failed to read Swap Titles file:', e);
+        return [];
+      }
+    }
+
+    async function findSwapTitlesFile(parentHandle) {
+      for await (const [name, handle] of parentHandle.entries()) {
+        if (handle.kind !== 'file') continue;
+        if (/^Swap Titles(\.txt)?$/i.test(name)) {
+          return handle;
+        }
+      }
+      return null;
     }
 
     async function dryRun() {
@@ -783,7 +823,9 @@ const SELECTORS = {
         console.log('[Autofill] Starting emoji uploads, count:', plan.emojis.length);
         for (let i=0; i<plan.emojis.length; i++) {
           if (state.abortController?.signal.aborted) throw new DOMException('Aborted', 'AbortError');
-          const idx=i+1, fid=`emoji${idx}`, file=plan.emojis[i].name;
+          const idx = i + 1;
+          const fid = `hintImage${idx}`;
+          const file = plan.emojis[i].name;
           console.log(`[Autofill] Uploading emoji ${idx}:`, file);
           const emojiField = document.querySelector(SELECTORS.fieldById(fid));
           console.log(`[Autofill] Emoji field ${fid} exists:`, !!emojiField);
